@@ -1,0 +1,139 @@
+---
+title: "Team Clustering for Top 30 NCAA Teams"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+Import Libraries.
+
+```{r}
+RNGkind(sample.kind = "Rounding")
+library(dplyr)
+library(ggplot2)
+library(BasketballAnalyzeR)
+```
+
+Reading in Data (NOTE: Make sure to set your working directory to Source File Location).
+Data consists of NCAA Teams from the 2010-2011 season to the 2019-2020 NCAA Basketball Season.
+The _tbox file is statistics for a team.
+The _obox file is statistics for a team's opponents.
+
+```{r}
+tbox = read.csv('data/teams_tbox.csv')
+obox = read.csv('data/teams_obox.csv')
+```
+
+Data Preparation: The next 3 cells are used for data preparation.
+
+We aggregate team data by their means for all 10 seasons. This should give us a good idea of a program's strengths and weaknesses across 10 seasons' worth of data.
+
+```{r}
+tbox_avg = tbox %>% group_by(Team) %>% summarise(across(everything(), list(mean))) %>% 
+  rename_all(~ gsub("_1", "", .))
+obox_avg = obox %>% group_by(Team) %>% summarise(across(everything(), list(mean))) %>%
+  rename_all(~ gsub("_1", "", .))
+tbox_avg
+```
+
+We use the BasketballAnalyzeR package to calculate the Offensive and Defensive Four Factors for all teams. WE then create factors used in our clustering. Any variables ending in a '.r' represent ratios.
+
+Factor 1 is effective field goal percentage.
+Factor 2 is for Turnover Ratio. On Offense, it describes your team and on defense it describes the opposing team.
+Factor 3 is for Offensive Rebounding Percentage and Defensive Rebounding Percentage.
+Factor 4 is not included in the analysis.
+
+We add 3-pointers made and Steals (as a ratio) because the former is important in the NBA and the latter isn't included in the calculation of the Four Factors.
+
+
+```{r}
+FF = fourfactors(tbox_avg, obox_avg)
+
+Team = FF$Team
+OD.Rtg = FF$ORtg/FF$DRtg #offensive over defensive rating
+F1.r = FF$F1.Off/FF$F1.Def #offensive over defensive first factor ratio
+F2.r = FF$F2.Def/FF$F2.Off #defensive over offensive second factor ratio
+F3.Off = FF$F3.Off #offensive third factor
+F3.Def = FF$F3.Def #defensive third factor 
+P3M = tbox_avg$P3M #total number of 3-point shots made
+STL.r = tbox_avg$STL/obox_avg$STL #steal ratio, team over opponents
+```
+
+Make a new dataframe with these variables. The 'data' variable will be used for the rest of our clustering analysis.
+
+```{r}
+data = data.frame(Team, OD.Rtg, F1.r, F2.r, F3.Off, F3.Def, P3M, STL.r)
+```
+
+How many clusters to use? 
+We can use the dotted line to determine (elbow method), seems like 4 (or 5) would be good. We'd be explaining over half of the variability with 4 clusters (56.87%). If we chose to use 5 clusters, we'd be explaining 62.7%. 
+
+```{r}
+set.seed(29)
+kclu1 = kclustering(data[-c(1)])
+svg(filename = 'images/kmeans_elbow_plot.svg')
+plot(kclu1)
+dev.off()
+plot(kclu1)
+```
+
+The radial plots give some information on what factors make up each cluster. 
+
+CHI - explains the average variability within each cluster, under 50% in the clear. Ideally we want these as low as possible. The closer they are to one the more similar they are to the other clusters. 
+
+```{r}
+set.seed(29)
+kclu2 = kclustering(data[-c(1)], labels=data$Team, k = 5)
+svg(filename = 'images/kmeans_clustering_5.svg', width = 6, height = 4.5)
+plot(kclu2)
+dev.off()
+plot(kclu2)
+```
+
+Who is in each cluster? 
+Cluster 1 = Duke, Florida, Louisville, Syracuse
+Cluster 2 = Butler, Michigan, Ohio-State, Virginia
+Cluster 3 = Colorado, Georgia-Tech, Maryland, Stanford, Vanderbilt
+Cluster 4 = Baylor, Connecticut, Florida-State, Indiana, Louisiana-State, Marquette, North-Carolina, Purdue,
+            Tennessee, Texas, UCLA, Washington
+Cluster 5 = Arizona, Gonzaga, Kansas, Kentucky, Michigan-State
+
+```{r}
+print(kclu2$Subjects)
+```
+
+
+
+```{r}
+cluster <- as.factor(kclu2$Subjects$Cluster)
+Xbubble <- data.frame(Team=tbox_avg$Team, PTS=tbox_avg$PTS,
+                      PTS.Opp=obox_avg$PTS, cluster,
+                      W=tbox_avg$W)
+labs <- c("PTS", "PTS.Opp", "cluster", "Wins")
+svg(filename = 'images/bubble_pts_vs_opponent_pts.svg', width = 6, height = 4.5)
+bubbleplot(Xbubble, id="Team", x="PTS", y="PTS.Opp",
+           col="cluster", size="W", labels=labs,
+           title = 'Opponents Points scored versus Team Points scored')
+dev.off()
+bubbleplot(Xbubble, id="Team", x="PTS", y="PTS.Opp",
+           col="cluster", size="W", labels=labs,
+           title = 'Opponents Points scored versus Team Points scored')
+```
+What do teams in the NCAA prioritize over the past 10 seasons? Do they prioritize Offense or Defense? And how does Offensive Rating contribute to wins versus Defensive Rating?
+
+We can see in the bubble plot below that Offense contributes more to wins than Defense (see the sizes of the Bubbles). We can also see that Duke is the better Offensive and Defensive team in the past 10 seasons versus Kentucky.
+
+```{r}
+Xbubble2 <- data.frame(Team=FF$Team, PTS=FF$ORtg,
+                      PTS.Opp=FF$DRtg, cluster,
+                      W=tbox_avg$W)
+labs_2 <- c("Offensive Rating", "Defensive Rating", "cluster", "Wins")
+svg(filename = 'images/bubble_ortg_drtg.svg', width = 6, height = 4.5)
+bubbleplot(Xbubble2, id="Team", x="PTS", y="PTS.Opp",
+           col="cluster", size="W", labels=labs_2, 
+           title = 'Defensive Rating versus Offensive Rating')
+dev.off()
+bubbleplot(Xbubble2, id="Team", x="PTS", y="PTS.Opp",
+           col="cluster", size="W", labels=labs_2, 
+           title = 'Defensive Rating versus Offensive Rating')
+```

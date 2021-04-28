@@ -1,0 +1,141 @@
+---
+title: "Player Clustering for Duke and Kentucky"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+Importing any useful libraries
+
+```{r}
+RNGkind(sample.kind = "Rounding")
+library(dplyr)
+library(ggplot2)
+library(BasketballAnalyzeR)
+library(gridExtra)
+```
+Reading in Data (NOTE: Make sure to set your working directory to Source File Location)
+
+```{r}
+pbox <- read.csv('data/pbox_duke_kentucky.csv')
+```
+
+We conduct some initial data exploration on Pbox, to nail down whether we want to go with rate statistics such as  per-minute or per-game. This also lets us filter out any players that don't meet a minutes requirement, making it easier to cluster.
+
+```{r}
+pbox_nocar <- pbox %>% filter(Year != 'Career')
+pbox_nocar %>% summarize(avg_mins = mean(MIN))
+pbox_nocar %>% summarize(med_mins = median(MIN))
+```
+
+We get a pretty good idea that the average player per season on Duke or Kentucky players 564 minutes and at least 50% of them play over 500 minutes. We'll be looking at Career data of NCAA basketball players, so we can be fair to those players who only play 1 season of college basketball.
+
+```{r}
+pbox_c <- pbox %>% 
+  filter(Year == 'Career', MIN >= 500)
+svg(file="images/hist_games_played.svg")
+hist(pbox_c$GP, col = 'steelblue', main = 'Histogram of Games Played',
+     xlab = 'Games Played')
+dev.off()
+hist(pbox_c$GP, col = 'steelblue', main = 'Histogram of Games Played',
+     xlab = 'Games Played')
+```
+
+Data Preparation: Here we'll select our variables of interest for clustering players. We use 9 variables, keeping Offensive rebounds and Defensive rebounds separate (some players are better at DREBs than OREBs and vice-versa).
+
+```{r}
+attach(pbox_c)
+data <- data.frame(PTS, P3M, OREB, DREB, AST, TOV, STL, BLK, PF)/GP
+detach(pbox_c)
+name_teams <- pbox_c %>% select(Team, Player)
+```
+
+Next, we'll use the hclustering function in the BasketballAnalyzeR package. This is a hierarchical clustering approach, mainly because it uses the Ward method of clustering, which results in clusters with the least within-cluster heterogeneity (or CHI). 
+
+We plot our results to determine the ideal number of clusters.
+
+```{r}
+hclu1 <- hclustering(data)
+svg(file="images/hierarchical_clustering_elbow_plot.svg")
+plot(hclu1)
+dev.off()
+plot(hclu1)
+```
+
+Using the plot in the previous cell, we've determined 6 clusters is the optimal number of clusters. Increasing the clusters doesn't necessarily break down one of our trouble clusters with the high CHI. We'll have to conclude that this group is filled with players that can be excel in more than one category of basketball.
+
+We'll use 6 clusters and create radial plots for easy examination in the various statistics we used. Please note that the statistics are reported in a per-game basis.
+
+```{r}
+hclu2 <- hclustering(data, labels = name_teams$Player, k = 6)
+svg(file="images/hierarchical_clustering_6.svg")
+plot(hclu2, profiles = TRUE)
+dev.off()
+plot(hclu2, profiles = TRUE)
+```
+
+While radial plots are cool, we'd like to know what players ended up in what clusters. We can use a dendrogram to figure it out.
+
+```{r}
+svg("images/dendrogram.svg", width=7.5, height=10)
+plot(hclu2, rect = TRUE, colored.branches=TRUE,
+     cex.labels=0.50)
+dev.off()
+plot(hclu2, rect = TRUE, colored.branches=TRUE,
+     cex.labels=0.50)
+```
+
+We can dig into the radial plots a little more by visualizing the variance of players within the clusters and which statistics they vary by the most.
+
+```{r}
+GP <- pbox_c$GP
+X <- data.frame(hclu2$Subjects, data, GP)
+
+dvar <- c("PTS","P3M","OREB", "DREB", "AST",
+            "TOV", "STL","BLK","PF")
+svar <- "GP"
+
+yRange <- range(X[,dvar])
+sizeRange <- c(20, 160)
+no.clu <- 6
+p <- vector(no.clu, mode="list")
+for (k in 1:no.clu) {
+  XC <- subset(X, Cluster==k)
+  vrb <- variability(XC[,3:12], data.var=dvar,
+                     size.var=svar, weight=FALSE,
+                     VC=FALSE)
+  title <- paste("Cluster", k)
+  p[[k]] <- plot(vrb, size.lim=sizeRange, ylim=yRange,
+                 title=title, leg.pos=c(0,1),
+                 leg.just=c(-0.5,0),
+                 leg.box="vertical",
+                 leg.brk=seq(40,160,40),
+                 leg.title.pos="left", leg.nrow=1,
+                 max.circle=7)
+}
+svg(filename = 'images/variance_plot_players.svg')
+grid.arrange(grobs=p, ncol=2)
+dev.off()
+grid.arrange(grobs=p, ncol=2)
+```
+
+Here I'll just print the number of people (n) per cluster per Team. I'll graph the results as well in a bar chart.
+
+```{r}
+name_team_clus <- cbind(name_teams, hclu2$Subjects$Cluster)
+name_team_clus_count <- name_team_clus %>% count(Team, Cluster = factor(hclu2$Subjects$Cluster))
+name_team_clus_count
+svg('images/barchart_players.svg', width = 6, height = 4.5)
+ggplot(name_team_clus_count, aes(x = Team, y = n, fill = Cluster)) +
+  geom_bar(stat = 'identity', position = 'dodge') +
+  ylab('Count') +
+  ggtitle('Cluster proportions for Duke and Kentucky players') + 
+  theme(plot.title = element_text(hjust = 0.5))
+dev.off()
+ggplot(name_team_clus_count, aes(x = Team, y = n, fill = Cluster)) +
+  geom_bar(stat = 'identity', position = 'dodge') +
+  ylab('Count') +
+  ggtitle('Cluster proportions for Duke and Kentucky players') + 
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
